@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.netlify/
+.netlify-cli-appdata/
+.netlify-cli-local/
+.npm-cache/
+local-data/
+.env
+.env.*
+*.log
+local-server-ready.txt
