@@ -1,4 +1,5 @@
 import { clip, env } from "./util.mjs";
+import { normalizeRuntimeMode } from "./runtime-mode.mjs";
 
 const INTL_BASE = "https://api.siliconflow.com/v1";
 const CN_BASE = "https://api.siliconflow.cn/v1";
@@ -30,9 +31,16 @@ const CHANNELS = [
   }
 ];
 
-export function configuredChannels() {
-  return CHANNELS.map((channel) => ({
+export function channelsForRuntime(runtimeMode) {
+  const mode = normalizeRuntimeMode(runtimeMode);
+  const order = new Map(mode.channelOrder.map((name, index) => [name, index]));
+  return [...CHANNELS].sort((a, b) => (order.get(a.name) ?? 99) - (order.get(b.name) ?? 99));
+}
+
+export function configuredChannels(runtimeMode) {
+  return channelsForRuntime(runtimeMode).map((channel, index) => ({
     ...channel,
+    priority: index + 1,
     configured: Boolean(env(channel.keyEnv))
   }));
 }
@@ -52,7 +60,6 @@ async function fetchModelCatalog(channel, timeoutMs = 20000) {
       },
       signal: controller.signal
     });
-    clearTimeout(timer);
     if (!response.ok) return [];
     const payload = await response.json();
     const rows = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
@@ -60,8 +67,9 @@ async function fetchModelCatalog(channel, timeoutMs = 20000) {
       .map((item) => (typeof item === "string" ? item : item?.id || item?.name || ""))
       .filter(Boolean);
   } catch {
-    clearTimeout(timer);
     return [];
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -107,11 +115,11 @@ function rankResearchModel(id) {
   return score;
 }
 
-export async function discoverResearchModels(limit = 6) {
+export async function discoverResearchModels(limit = 6, runtimeMode) {
   if (modelCatalogCache) return modelCatalogCache.slice(0, limit);
 
   const discovered = [];
-  for (const channel of CHANNELS) {
+  for (const channel of channelsForRuntime(runtimeMode)) {
     const models = await fetchModelCatalog(channel);
     for (const id of models) {
       const score = rankResearchModel(id);
@@ -122,10 +130,13 @@ export async function discoverResearchModels(limit = 6) {
   const preferredFallback = [
     "deepseek-ai/DeepSeek-V4-Pro",
     "Pro/deepseek-ai/DeepSeek-V3.2",
+    "zai-org/GLM-5.1",
+    "Pro/zai-org/GLM-5.1",
+    "Qwen/Qwen3.6-35B-A3B",
+    "moonshotai/Kimi-K2.6",
+    "Pro/moonshotai/Kimi-K2.6",
     "Qwen/Qwen3-235B-A22B",
     "Qwen/QwQ-32B",
-    "zai-org/GLM-4.5",
-    "moonshotai/Kimi-K2-Instruct",
     "MiniMaxAI/MiniMax-M1"
   ];
 
@@ -153,7 +164,9 @@ function modelsForChannel(channel, options) {
 export async function callModel(messages, options = {}) {
   const errors = [];
   const timeoutMs = options.timeoutMs ?? 120000;
-  for (const channel of CHANNELS) {
+  const allowedChannels = Array.isArray(options.channelNames) && options.channelNames.length ? new Set(options.channelNames) : null;
+  for (const channel of channelsForRuntime(options.runtimeMode)) {
+    if (allowedChannels && !allowedChannels.has(channel.name)) continue;
     const apiKey = env(channel.keyEnv);
     if (!apiKey) continue;
     const models = modelsForChannel(channel, options);
@@ -176,7 +189,6 @@ export async function callModel(messages, options = {}) {
           }),
           signal: controller.signal
         });
-        clearTimeout(timer);
 
         if (!response.ok) {
           const text = await response.text();
@@ -196,8 +208,9 @@ export async function callModel(messages, options = {}) {
           channel: channel.name
         };
       } catch (error) {
-        clearTimeout(timer);
         errors.push(`${channel.name}/${model}: ${error?.message || String(error)}`);
+      } finally {
+        clearTimeout(timer);
       }
     }
   }

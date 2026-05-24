@@ -1,9 +1,10 @@
 import { normalizeText, clip, uniqBy } from "./util.mjs";
+import { canonicalSourceUrl } from "./source-audit.mjs";
 
 export const RECENT_REPORT_DAYS = 7;
 export const FORMAL_SOURCE_MIN = 15;
 export const BRIEF_SOURCE_MIN = 10;
-export const LIMITED_SOURCE_MIN = 5;
+export const LIMITED_SOURCE_MIN = 0;
 export const MIN_TOPIC_COVERAGE = 3;
 export const MIN_TOPIC_COVERAGE_FOR_LIMITED = 1;
 export const MIN_READABLE_FOR_FORMAL = 10;
@@ -22,7 +23,7 @@ export function isHttpUrl(value) {
 }
 
 export function cleanUrl(value) {
-  return String(value || "").trim().replace(/[),.;，。]+$/g, "");
+  return canonicalSourceUrl(value) || String(value || "").trim().replace(/[),.;，。]+$/g, "");
 }
 
 export function primaryCompanyName(value = {}) {
@@ -51,6 +52,11 @@ export function normalizeReportSources(sources = [], max = 32) {
         usedFor: source.usedFor || source.topic || source.query || "公开信息核验",
         query: source.query || "",
         topic: source.topic || "",
+        sourceType: source.sourceType || "",
+        domain: source.domain || "",
+        relevanceReason: source.relevanceReason || "",
+        relevanceScore: source.relevanceScore ?? "",
+        isCompanySpecific: Boolean(source.isCompanySpecific),
         readable: Boolean(source.readable || String(source.text || "").length > 200),
         text: source.text || ""
       }))
@@ -72,10 +78,10 @@ export function evaluateSourceQuality(sources = []) {
   if (verifiedSourceCount < FORMAL_SOURCE_MIN) {
     qualityWarnings.push(`可校验来源 ${verifiedSourceCount} 条，低于正式报告门槛 ${FORMAL_SOURCE_MIN} 条。`);
   }
-  if (verifiedSourceCount < LIMITED_SOURCE_MIN) {
-    qualityWarnings.push(`可校验来源少于 ${LIMITED_SOURCE_MIN} 条，仅生成检索诊断，不生成商机判断。`);
+  if (verifiedSourceCount === 0) {
+    qualityWarnings.push("未取得可校验公开链接，将生成证据不足版；正文只保留待确认问题和用户提供线索，不输出无证据强结论。");
   } else if (verifiedSourceCount < BRIEF_SOURCE_MIN) {
-    qualityWarnings.push(`可校验来源 ${verifiedSourceCount} 条，低于简版报告门槛 ${BRIEF_SOURCE_MIN} 条，将生成有限资料版，仅供会前参考。`);
+    qualityWarnings.push(`可校验来源 ${verifiedSourceCount} 条，低于简版报告门槛 ${BRIEF_SOURCE_MIN} 条，将生成证据不足版，仅供会前参考。`);
   }
   if (readableSourceCount < MIN_READABLE_FOR_FORMAL) {
     qualityWarnings.push(`可读来源 ${readableSourceCount} 条，证据厚度不足。`);
@@ -83,7 +89,7 @@ export function evaluateSourceQuality(sources = []) {
   if (topicCoverageCount < MIN_TOPIC_COVERAGE_FOR_LIMITED) {
     qualityWarnings.push(`来源只覆盖 ${topicCoverageCount} 类主题，低于有限资料版最低要求 ${MIN_TOPIC_COVERAGE_FOR_LIMITED} 类。`);
   } else if (topicCoverageCount < MIN_TOPIC_COVERAGE) {
-    qualityWarnings.push(`来源只覆盖 ${topicCoverageCount} 类主题，低于正式/简版报告要求 ${MIN_TOPIC_COVERAGE} 类，将生成有限资料版。`);
+    qualityWarnings.push(`来源只覆盖 ${topicCoverageCount} 类主题，低于正式/简版报告要求 ${MIN_TOPIC_COVERAGE} 类，将生成证据不足版。`);
   }
   if (missingTopics.length) {
     qualityWarnings.push(`缺少主题覆盖：${missingTopics.join("、")}。`);
@@ -91,16 +97,9 @@ export function evaluateSourceQuality(sources = []) {
 
   let qualityLevel = "formal";
   let qualityLabel = "正式报告";
-  if (
-    verifiedSourceCount < LIMITED_SOURCE_MIN ||
-    readableSourceCount < MIN_READABLE_FOR_LIMITED ||
-    topicCoverageCount < MIN_TOPIC_COVERAGE_FOR_LIMITED
-  ) {
-    qualityLevel = "diagnostic";
-    qualityLabel = "检索诊断";
-  } else if (verifiedSourceCount < BRIEF_SOURCE_MIN || topicCoverageCount < MIN_TOPIC_COVERAGE) {
+  if (verifiedSourceCount < BRIEF_SOURCE_MIN || topicCoverageCount < MIN_TOPIC_COVERAGE) {
     qualityLevel = "limited";
-    qualityLabel = "有限资料版";
+    qualityLabel = "证据不足版";
   } else if (verifiedSourceCount < FORMAL_SOURCE_MIN || readableSourceCount < MIN_READABLE_FOR_FORMAL) {
     qualityLevel = "brief";
     qualityLabel = "简版报告";
@@ -115,7 +114,7 @@ export function evaluateSourceQuality(sources = []) {
     coveredTopics,
     missingTopics,
     qualityWarnings,
-    canGenerateReport: qualityLevel !== "diagnostic"
+    canGenerateReport: true
   };
 }
 
@@ -130,12 +129,12 @@ export function buildDiagnosticReport(company, sources, quality) {
     quickCards: [
       {
         title: "资料不足",
-        body: "本次不生成商机判断。",
+        body: "本次只能形成证据不足版会前参考。",
         insight: `可校验来源 ${quality.verifiedSourceCount} 条，主题覆盖 ${quality.topicCoverageCount} 类。`
       },
       {
         title: "风险控制",
-        body: "已阻止无依据报告生成。",
+        body: "无证据内容只进入待确认，不写成客户事实。",
         insight: "避免模型基于行业常识补全客户事实。"
       }
     ],
@@ -158,7 +157,7 @@ export function buildDiagnosticReport(company, sources, quality) {
     },
     diagnosis: {
       title: "检索诊断",
-      summary: "来源不足，系统已熔断正式报告生成。",
+      summary: "来源不足，系统只生成证据不足版，并列明检索缺口。",
       warnings: quality.qualityWarnings,
       coveredTopics: quality.coveredTopics,
       missingTopics: quality.missingTopics,

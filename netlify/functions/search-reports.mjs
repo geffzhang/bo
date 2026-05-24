@@ -1,8 +1,9 @@
-import { json } from "../lib/http.mjs";
-import { getIndex, readJson } from "../lib/store.mjs";
+﻿import { json } from "../lib/http.mjs";
+import { getIndex, listJson, readJson, saveIndex } from "../lib/store.mjs";
 import { normalizeText, scoreMatch } from "../lib/util.mjs";
 import { qualityStatusText, withinDays } from "../lib/report-quality.mjs";
 import { buildOpportunityRating, ratingIndex } from "../lib/opportunity-rating.mjs";
+import { auditReport } from "../lib/source-audit.mjs";
 
 function periodDays(period) {
   if (period === "7d") return 7;
@@ -35,16 +36,60 @@ export default async function handler(request) {
   const period = url.searchParams.get("period") || "30d";
   const rating = url.searchParams.get("rating") || "all";
   const days = periodDays(period);
-  const index = await getIndex();
+  const normalizedQuery = normalizeText(query);
+  const matchThreshold = normalizedQuery ? Math.max(4, Math.ceil(normalizedQuery.length * 0.9)) : 0;
+  let index = await getIndex();
+  if (!(index.reports || []).length) {
+    const restored = (await listJson("reports"))
+      .map((item) => item.value)
+      .filter((report) => report?.reportId)
+      .map((report) => ({
+        reportId: report.reportId,
+        companyName: report.companyName,
+        standardName: report.standardName,
+        companyKey: report.companyKey,
+        aliases: report.aliases || [],
+        region: report.region || "",
+        industry: report.industry || "",
+        keywords: report.keywords || [],
+        sourceCount: report.sourceCount,
+        verifiedSourceCount: report.verifiedSourceCount,
+        readableSourceCount: report.readableSourceCount,
+        topicCoverageCount: report.topicCoverageCount,
+        qualityLevel: report.qualityLevel,
+        qualityLabel: report.qualityLabel,
+        opportunityRating: report.opportunityRating ? ratingIndex(report.opportunityRating) : undefined,
+        durationMs: report.durationMs,
+        generatedAt: report.generatedAt,
+        updatedAt: report.updatedAt,
+        modelName: report.modelName,
+        modelChannel: report.modelChannel,
+        modelDisplay: report.modelDisplay,
+        usedModels: report.usedModels || []
+      }))
+      .sort((a, b) => String(b.generatedAt).localeCompare(String(a.generatedAt)));
+    if (restored.length) {
+      index = { reports: restored };
+      await saveIndex(index);
+    }
+  }
   const enrichedReports = await Promise.all(
     (index.reports || []).map(async (report) => {
-      if (report.opportunityRating) return report;
-      if (report.qualityLevel !== "formal" || Number(report.verifiedSourceCount ?? report.sourceCount ?? 0) < 15) {
-        return { ...report, opportunityRating: { status: "not_rated", label: "暂不评级" } };
-      }
       const full = await readJson("reports", `${report.reportId}.json`, null);
-      if (!full) return { ...report, opportunityRating: { status: "not_rated", label: "暂不评级" } };
-      return { ...report, opportunityRating: ratingIndex(buildOpportunityRating(full)) };
+      if (!full) return { ...report, opportunityRating: report.opportunityRating || { status: "not_rated", label: "鏆備笉璇勭骇" } };
+      const audited = auditReport(full);
+      const ratingValue = ratingIndex(buildOpportunityRating(audited));
+      return {
+        ...report,
+        sourceCount: audited.sourceCount,
+        verifiedSourceCount: audited.verifiedSourceCount,
+        readableSourceCount: audited.readableSourceCount,
+        topicCoverageCount: audited.topicCoverageCount,
+        qualityLevel: audited.qualityLevel,
+        qualityLabel: audited.qualityLabel,
+        sourceAudit: audited.sourceAudit,
+        opportunityRating: ratingValue
+      };
     })
   );
   const reports = dedupeLatestByCompany(
@@ -52,7 +97,7 @@ export default async function handler(request) {
       .filter((report) => (days ? withinDays(report.generatedAt, days) : true))
       .map((report) => ({
         ...report,
-        opportunityRating: report.opportunityRating || { status: "not_rated", label: "暂不评级" },
+        opportunityRating: report.opportunityRating || { status: "not_rated", label: "鏆備笉璇勭骇" },
         qualityText: qualityStatusText(report),
         matchScore: query ? scoreMatch(report, query) : 1
       }))
@@ -61,9 +106,10 @@ export default async function handler(request) {
         if (rating === "not_rated") return report.opportunityRating?.status !== "rated";
         return report.opportunityRating?.grade === rating;
       })
-      .filter((report) => report.matchScore > 0)
+      .filter((report) => report.matchScore >= matchThreshold)
       .sort((a, b) => String(b.generatedAt).localeCompare(String(a.generatedAt)))
       .sort((a, b) => b.matchScore - a.matchScore)
   ).slice(0, 200);
   return json({ ok: true, period, rating, reports });
 }
+

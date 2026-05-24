@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 const LOCAL_ROOT = join(process.cwd(), "local-data");
@@ -30,7 +30,7 @@ export async function readJson(namespace, key, fallback = null) {
   }
   try {
     const raw = await readFile(localPath(namespace, key), "utf8");
-    return JSON.parse(raw);
+    return JSON.parse(raw.replace(/^\uFEFF/, ""));
   } catch {
     return fallback;
   }
@@ -69,6 +69,44 @@ export async function writeText(namespace, key, value) {
   const path = localPath(namespace, key);
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, value, "utf8");
+}
+
+export async function listJson(namespace) {
+  const store = await blobStore(namespace);
+  if (store) {
+    try {
+      const listed = await store.list();
+      const rows = Array.isArray(listed?.blobs) ? listed.blobs : [];
+      const out = [];
+      for (const row of rows) {
+        const key = row.key || row.name;
+        if (!key || !String(key).endsWith(".json")) continue;
+        const value = await store.get(key, { type: "json" });
+        if (value) out.push({ key, value });
+      }
+      return out;
+    } catch {
+      return [];
+    }
+  }
+
+  try {
+    const dir = localPath(namespace, "");
+    const files = await readdir(dir, { withFileTypes: true });
+    const out = [];
+    for (const file of files) {
+      if (!file.isFile() || !file.name.endsWith(".json")) continue;
+      try {
+        const raw = await readFile(localPath(namespace, file.name), "utf8");
+        out.push({ key: file.name, value: JSON.parse(raw.replace(/^\uFEFF/, "")) });
+      } catch {
+        // Ignore unreadable local cache files.
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
 }
 
 export async function deleteObject(namespace, key) {
