@@ -50,11 +50,21 @@ export function runtimeModeFromHostname(hostname = "") {
   }
   return {
     mode: "auto",
-    label: "自动降级（国际优先）",
+    label: "国际优先｜失败自动切国内",
     hostname: host,
     channelOrder: [...INTL_CHANNELS, ...CN_CHANNELS],
     researchModels: [...INTL_RESEARCH_MODELS, ...CN_RESEARCH_MODELS]
   };
+}
+
+function modeFromPath(pathname = "") {
+  const first = String(pathname || "")
+    .split("/")
+    .filter(Boolean)[0]
+    ?.toLowerCase();
+  if (/^(cn|china|domestic)$/.test(first || "")) return "china";
+  if (/^(intl|international)$/.test(first || "")) return "international";
+  return "";
 }
 
 export function runtimeModeFromRequest(request) {
@@ -68,6 +78,17 @@ export function runtimeModeFromRequest(request) {
   const explicitMode = parsedUrl?.searchParams.get("mode") || request.headers.get("x-nb-bo-runtime-mode") || "";
   if (/^(cn|china|domestic)$/i.test(explicitMode)) return runtimeModeFromHostname("cn.local");
   if (/^(intl|international)$/i.test(explicitMode)) return runtimeModeFromHostname("intl.local");
+  const pathMode = modeFromPath(parsedUrl?.pathname || "");
+  if (pathMode === "china") return runtimeModeFromHostname("cn.local");
+  if (pathMode === "international") return runtimeModeFromHostname("intl.local");
+  const referer = request.headers.get("referer") || "";
+  try {
+    const refererMode = modeFromPath(new URL(referer).pathname);
+    if (refererMode === "china") return runtimeModeFromHostname("cn.local");
+    if (refererMode === "international") return runtimeModeFromHostname("intl.local");
+  } catch {
+    // Ignore malformed referer values.
+  }
   const forwardedHost =
     request.headers.get("x-forwarded-host") ||
     request.headers.get("host") ||
