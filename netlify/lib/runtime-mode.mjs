@@ -1,19 +1,20 @@
-const INTL_CHANNELS = ["international-primary", "international-secondary"];
-const CN_CHANNELS = ["china-primary", "china-secondary"];
+import { env } from "./util.mjs";
 
-export const INTL_RESEARCH_MODELS = [
-  "deepseek-ai/DeepSeek-V4-Flash",
-  "deepseek-ai/DeepSeek-V4-Pro",
-  "zai-org/GLM-5.1",
-  "Qwen/Qwen3.6-35B-A3B",
-  "moonshotai/Kimi-K2.6"
-];
-export const CN_RESEARCH_MODELS = [
-  "Pro/deepseek-ai/DeepSeek-V3.2",
-  "Pro/zai-org/GLM-5.1",
-  "Qwen/Qwen3.6-35B-A3B",
-  "Pro/moonshotai/Kimi-K2.6"
-];
+const DEFAULT_CHANNELS = ["default-primary"];
+
+function parseModelList(value) {
+  return String(value || "")
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+export const RESEARCH_MODELS = (() => {
+  const configured = parseModelList(env("OPENAI_COMPAT_RESEARCH_FALLBACK_MODELS"));
+  if (configured.length) return configured;
+  const primary = String(env("OPENAI_COMPAT_MODEL") || "").trim();
+  return primary ? [primary] : [];
+})();
 
 function cleanHost(hostname = "") {
   return String(hostname || "")
@@ -33,27 +34,27 @@ export function runtimeModeFromHostname(hostname = "") {
   if (isCn) {
     return {
       mode: "china",
-      label: "国内优先",
+      label: "统一模型（cn 路径）",
       hostname: host,
-      channelOrder: [...CN_CHANNELS, ...INTL_CHANNELS],
-      researchModels: [...CN_RESEARCH_MODELS, ...INTL_RESEARCH_MODELS]
+      channelOrder: [...DEFAULT_CHANNELS],
+      researchModels: [...RESEARCH_MODELS]
     };
   }
   if (isIntl) {
     return {
       mode: "international",
-      label: "国际优先",
+      label: "统一模型（intl 路径）",
       hostname: host,
-      channelOrder: [...INTL_CHANNELS, ...CN_CHANNELS],
-      researchModels: [...INTL_RESEARCH_MODELS, ...CN_RESEARCH_MODELS]
+      channelOrder: [...DEFAULT_CHANNELS],
+      researchModels: [...RESEARCH_MODELS]
     };
   }
   return {
     mode: "auto",
-    label: "国际优先｜失败自动切国内",
+    label: "统一模型",
     hostname: host,
-    channelOrder: [...INTL_CHANNELS, ...CN_CHANNELS],
-    researchModels: [...INTL_RESEARCH_MODELS, ...CN_RESEARCH_MODELS]
+    channelOrder: [...DEFAULT_CHANNELS],
+    researchModels: [...RESEARCH_MODELS]
   };
 }
 

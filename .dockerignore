@@ -1,0 +1,7 @@
+node_modules
+.git
+dist
+local-data
+local-netlify-dev.log
+local-server-ready.txt
+.netlify

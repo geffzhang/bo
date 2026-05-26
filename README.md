@@ -97,44 +97,61 @@ nb-bo 是一个面向售前、销售和业务团队的企业商机研究工具�
 
 ## 模型与通道逻辑
 
-模型通过硅基流动 OpenAI 兼容接口调用。API Key 通过本地 `.env` 或 Netlify 环境变量提供，不应写入前端代码或提交到仓库。
+模型通过 OpenAI 兼容接口调用。默认地址仍为硅基流动，也可以通过环境变量切换为任意兼容网关。API Key 通过本地 `.env` 或 Netlify 环境变量提供，不应写入前端代码或提交到仓库。
 
 默认通道：
 
-- 国际主/备通道：`deepseek-ai/DeepSeek-V4-Pro`
-- 国内主/备通道：`Pro/deepseek-ai/DeepSeek-V3.2`
+- 统一通道：`deepseek-ai/DeepSeek-V4-Pro`
 
 检索规划和证据扩容中还可使用：
 
-- 国际：`deepseek-ai/DeepSeek-V4-Flash`、`zai-org/GLM-5.1`、`Qwen/Qwen3.6-35B-A3B`、`moonshotai/Kimi-K2.6`
-- 国内：`Pro/deepseek-ai/DeepSeek-V3.2`、`Pro/zai-org/GLM-5.1`、`Qwen/Qwen3.6-35B-A3B`、`Pro/moonshotai/Kimi-K2.6`
+- `deepseek-ai/DeepSeek-V4-Flash`、`zai-org/GLM-5.1`、`Qwen/Qwen3.6-35B-A3B`、`moonshotai/Kimi-K2.6`
 
 访问路径会影响通道优先级：
 
 | 访问方式 | 含义 |
 | --- | --- |
-| `/` | 国际优先，失败自动切国内 |
-| `/intl` 或 `/INTL` | 固定国际优先 |
-| `/cn` 或 `/CN` | 固定国内优先 |
-| `intl.*` 子域名 | 固定国际优先 |
-| `cn.*` 子域名 | 固定国内优先 |
+| `/` | 统一模型通道 |
+| `/intl` 或 `/INTL` | 统一模型通道（兼容旧路径） |
+| `/cn` 或 `/CN` | 统一模型通道（兼容旧路径） |
+| `intl.*` 子域名 | 统一模型通道（兼容旧域名） |
+| `cn.*` 子域名 | 统一模型通道（兼容旧域名） |
+
+说明：以上模式仅为兼容历史访问方式，不再影响模型选择与通道顺序。
+
+当前配置口径：所有通道统一使用 `OPENAI_COMPAT_BASE_URL`、`OPENAI_COMPAT_API_KEY`、`OPENAI_COMPAT_MODEL`。
 
 ## 环境变量
 
 本地运行时，在项目根目录创建 `.env`。线上部署时，在 Netlify 项目后台配置同名环境变量。
 
 ```text
-SILICONFLOW_INTL_API_KEY_PRIMARY=
-SILICONFLOW_INTL_API_KEY_SECONDARY=
-SILICONFLOW_CN_API_KEY_PRIMARY=
-SILICONFLOW_CN_API_KEY_SECONDARY=
+OPENAI_COMPAT_BASE_URL=
+OPENAI_COMPAT_API_KEY=
+OPENAI_COMPAT_MODEL=
+OPENAI_COMPAT_RESEARCH_FALLBACK_MODELS=
 JINA_API_KEY=
+MINIO_ENDPOINT=
+MINIO_PORT=
+MINIO_USE_SSL=
+MINIO_ACCESS_KEY=
+MINIO_SECRET_KEY=
+MINIO_BUCKET=
+MINIO_REGION=
+MINIO_AUTO_CREATE_BUCKET=
 ```
 
 说明：
 
-- `SILICONFLOW_*` 是模型调用密钥。
+- `OPENAI_COMPAT_API_KEY` 是统一模型通道使用的 API Key。
+- `OPENAI_COMPAT_BASE_URL` 用于覆盖统一模型通道的 OpenAI 兼容网关地址（示例：`https://your-gateway.example.com/v1`）。
+- 不配置 `OPENAI_COMPAT_*` 时，默认使用硅基流动地址（兼容旧配置）。
+- `OPENAI_COMPAT_MODEL` 是统一模型通道的默认模型。
+- `OPENAI_COMPAT_RESEARCH_FALLBACK_MODELS` 可配置研究模型候选列表，支持逗号或换行分隔。
 - `JINA_API_KEY` 可选；不配置时仍可使用公开 Reader/Search 能力，但稳定性和额度可能受限。
+- MinIO 配置项全部填写后会启用 MinIO 存储；`MINIO_ENDPOINT` 支持 `host` 或 `http(s)://host:port`。
+- `MINIO_USE_SSL` 可选，常见取值：`true` / `false`；若 `MINIO_ENDPOINT` 带协议可自动推断。
+- `MINIO_AUTO_CREATE_BUCKET` 可选，设为 `true` 时在桶不存在时尝试自动创建。
 - `.env` 已被 `.gitignore` 排除，请不要提交本地环境变量文件。
 
 ## 本地运行
@@ -176,6 +193,126 @@ $env:HTTP_PROXY='http://127.0.0.1:PORT'
 $env:HTTPS_PROXY='http://127.0.0.1:PORT'
 ```
 
+Docker Compose 方式：
+
+```powershell
+copy .env.example .env
+notepad .env
+docker compose -f docker-compose.local.yml build
+docker compose -f docker-compose.local.yml up -d
+```
+
+如果需要同时启动 MinIO（本地联调）：
+
+```powershell
+docker compose -f docker-compose.local.yml --profile minio up -d --build
+```
+
+然后打开：
+
+```text
+http://localhost:8888
+```
+
+常用命令：
+
+```powershell
+docker compose -f docker-compose.local.yml build --no-cache
+docker compose -f docker-compose.local.yml logs -f
+docker compose -f docker-compose.local.yml down
+docker compose -f docker-compose.local.yml --profile minio down
+```
+
+## MinIO 本地联调（最小示例）
+
+### 1) 启动 MinIO
+
+```powershell
+docker compose -f docker-compose.local.yml --profile minio up -d
+```
+
+启动后可访问：
+
+- API: `http://127.0.0.1:9000`
+- Console: `http://127.0.0.1:9001`
+- 用户名: `minioadmin`
+- 密码: `minioadmin123`
+
+### 2) 将 MinIO 配置写入 `.env`
+
+可直接复制以下内容到 `.env`：
+
+```text
+MINIO_ENDPOINT=http://127.0.0.1:9000
+MINIO_USE_SSL=false
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin123
+MINIO_BUCKET=nb-bo-dev
+MINIO_REGION=us-east-1
+MINIO_AUTO_CREATE_BUCKET=true
+```
+
+这些变量已包含在 `.env.example` 中，直接在 `.env` 里填写即可。
+
+### 3) 启动项目
+
+```powershell
+start-local.cmd
+```
+
+说明：
+
+- MinIO 与 Netlify Blobs 是并行支持、互斥启用：同一运行实例只会选一个远端后端。
+- 选择规则：配置完整 `MINIO_*` 时使用 MinIO；否则在 Netlify 运行时使用 Netlify Blobs；否则使用本地文件。
+- `MINIO_AUTO_CREATE_BUCKET=true` 时，首次写入会尝试自动创建 `MINIO_BUCKET` 指定的桶。
+- 不再联调时，删除或注释 MinIO 环境变量即可切换回 Netlify Blobs 或本地文件。
+
+### 4) 联调自检清单
+
+先看健康检查里的存储后端：
+
+```powershell
+Invoke-RestMethod http://localhost:8888/.netlify/functions/health | ConvertTo-Json -Depth 6
+```
+
+重点确认返回中的 `storage.backend`：
+
+- `minio`：当前优先写入 MinIO。
+- `netlify-blobs`：当前使用 Netlify Blobs。
+- `local-file`：当前仅使用本地文件存储（未选择远端后端）。
+
+同时关注 `storage.remoteAvailable`：
+
+- `true`：远端后端已就绪。
+- `false`：远端后端不可用；在强一致模式下，请求会直接报错，不会降级到本地文件。
+
+再确认 `channels` 数组中的通道配置是否生效：
+
+- `channels[*].baseUrl`：每个通道当前生效的 OpenAI 兼容接口地址。
+- `channels[*].baseUrlSource`：当前地址来源（例如 `env:OPENAI_COMPAT_BASE_URL` 或默认值）。
+- `channels[*].model`：每个通道当前生效的默认模型。
+- `channels[*].modelSource`：当前模型来源（例如 `env:OPENAI_COMPAT_MODEL` 或默认值）。
+- `channels[*].resolvedFrom`：来源摘要，便于日志里快速查看最终命中来源。
+- `channels[*].conflicts`：配置冲突信息（当同一链路配置了多个变量时可看到被覆盖项）。
+- `channels[*].scope`：通道所属区域（`intl` 或 `cn`）。
+- `configWarnings`：冲突总览，按通道聚合的简要告警列表（适合快速扫读）。
+
+常见 `configWarnings` 类型：
+
+- `api-key-missing`：单个通道缺少对应 API Key 环境变量。
+
+再执行一次实际写入（例如生成一个新报告任务），然后在 MinIO Console 中确认桶内对象是否增加：
+
+- Console: `http://127.0.0.1:9001`
+- 桶名：`MINIO_BUCKET` 的值（示例是 `nb-bo-dev`）
+- 关键前缀：`jobs/`、`reports/`、`index/`、`annual-reports/`
+
+如果 `storage.backend` 显示 `minio`，但桶里没有新对象：
+
+1. 检查 `.env` 中 `MINIO_*` 是否完整。
+2. 检查 MinIO 容器是否存活：`docker ps`。
+3. 检查 `MINIO_BUCKET` 是否存在，或启用 `MINIO_AUTO_CREATE_BUCKET=true`。
+
 ## 线上部署
 
 Netlify 配置已写入 `netlify.toml`：
@@ -193,11 +330,17 @@ Netlify 配置已写入 `netlify.toml`：
 npm run build
 ```
 
-如果使用自己的 Netlify 项目，需要在 Netlify 环境变量中配置上面的 `SILICONFLOW_*` 和可选 `JINA_API_KEY`。
+如果使用自己的 Netlify 项目，需要在 Netlify 环境变量中配置上面的 `OPENAI_COMPAT_*`、可选 `JINA_API_KEY`，以及可选 MinIO 配置。
 
 ## 数据存储
 
-线上使用 Netlify Blobs 保存：
+存储后端为互斥选择（不会同时使用 MinIO 和 Netlify Blobs）：
+
+1. MinIO（当 MinIO 环境变量完整可用时）
+2. Netlify Blobs（未启用 MinIO 且在 Netlify 运行时）
+3. 本地文件存储（仅在未选择远端后端时）
+
+保存内容包括：
 
 - 报告 JSON
 - 报告 HTML
@@ -205,7 +348,7 @@ npm run build
 - 任务状态
 - 年报解析结果
 
-本地运行时会使用本地存储目录模拟云端缓存，便于开发和验证。
+当前为强一致模式：如果已选择 MinIO 或 Netlify Blobs，远端不可用或操作失败会直接报错，不会降级到本地文件存储。
 
 ## 使用方法
 
@@ -277,7 +420,7 @@ netlify/lib/
   source-audit.mjs     来源审计
   job-progress.mjs     任务阶段与进度
   runtime-mode.mjs     国内/国际通道模式
-  store.mjs            Netlify Blobs / 本地存储
+        store.mjs            MinIO / Netlify Blobs / 本地存储
   ai.mjs               模型调用
 ```
 

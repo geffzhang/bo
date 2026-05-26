@@ -1,0 +1,26 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+    image: bo-local:dev
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8888
+    ports:
+      - "8888:8888"
+    restart: unless-stopped
+
+  minio:
+    profiles: ["minio"]
+    image: pgsty/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - ./local-data/minio:/data
+    restart: unless-stopped

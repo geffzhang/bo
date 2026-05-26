@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.PORT || 8888);
+const host = String(process.env.HOST || "127.0.0.1");
 
 async function loadEnv() {
   const envPath = join(root, ".env");
@@ -127,7 +128,9 @@ const server = createServer(async (req, res) => {
   await handleStatic(req, res, url);
 });
 
-server.listen(port, "127.0.0.1", async () => {
-  await writeFile(join(root, "local-server-ready.txt"), `http://localhost:${port}\n`, "utf8");
-  console.log(`nb-bo local server ready: http://localhost:${port}`);
+const displayHost = host === "0.0.0.0" ? "localhost" : host;
+
+server.listen(port, host, async () => {
+  await writeFile(join(root, "local-server-ready.txt"), `http://${displayHost}:${port}\n`, "utf8");
+  console.log(`nb-bo local server ready: http://${displayHost}:${port}`);
 });

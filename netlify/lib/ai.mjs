@@ -1,48 +1,196 @@
 import { clip, env } from "./util.mjs";
 import { normalizeRuntimeMode } from "./runtime-mode.mjs";
 
-const INTL_BASE = "https://api.siliconflow.com/v1";
-const CN_BASE = "https://api.siliconflow.cn/v1";
+const DEFAULT_BASE_URL = "https://api.siliconflow.com/v1";
+
+function normalizeBaseUrl(value) {
+  return String(value || "").trim().replace(/\/+$/, "");
+}
+
+function normalizeModel(value) {
+  return String(value || "").trim();
+}
+
+function configuredEntries(names, normalizeValue) {
+  const out = [];
+  for (const name of names) {
+    const value = normalizeValue(env(name));
+    if (!value) continue;
+    out.push({ name, value });
+  }
+  return out;
+}
+
+function configuredModelList(fallback, ...names) {
+  for (const name of names) {
+    const raw = env(name);
+    if (!raw) continue;
+    const rows = String(raw)
+      .split(/[\n,]/)
+      .map((item) => normalizeModel(item))
+      .filter(Boolean);
+    if (rows.length) return rows;
+  }
+  return fallback;
+}
+
+function conflictInfo(entries) {
+  if (entries.length <= 1) {
+    return {
+      hasConflict: false,
+      selected: entries[0] ? `env:${entries[0].name}` : "default",
+      overridden: [],
+    };
+  }
+
+  return {
+    hasConflict: true,
+    selected: `env:${entries[0].name}`,
+    overridden: entries.slice(1).map((item) => `env:${item.name}`),
+  };
+}
+
+function channelBaseUrlInfo(channel) {
+  const names = ["OPENAI_COMPAT_BASE_URL"];
+  const entries = configuredEntries(names, normalizeBaseUrl);
+
+  if (entries[0]) {
+    const selected = entries[0];
+    return {
+      value: selected.value,
+      source: `env:${selected.name}`,
+      conflict: conflictInfo(entries),
+    };
+  }
+
+  return { value: DEFAULT_BASE_URL, source: "default:global", conflict: conflictInfo(entries) };
+}
+
+function channelModelInfo(channel) {
+  const entries = configuredEntries(channel.modelEnvNames || [], normalizeModel);
+  if (entries[0]) {
+    const selected = entries[0];
+    return {
+      value: selected.value,
+      source: `env:${selected.name}`,
+      conflict: conflictInfo(entries),
+    };
+  }
+  return {
+    value: channel.defaultModel,
+    source: `default:${channel.name}`,
+    conflict: conflictInfo(entries),
+  };
+}
+
+function resolveChannel(channel) {
+  const base = channelBaseUrlInfo(channel);
+  const model = channelModelInfo(channel);
+  return {
+    ...channel,
+    baseUrl: base.value,
+    baseUrlSource: base.source,
+    model: model.value,
+    modelSource: model.source,
+    resolvedFrom: {
+      baseUrl: base.source,
+      model: model.source,
+    },
+    conflicts: {
+      hasConflicts: base.conflict.hasConflict || model.conflict.hasConflict,
+      baseUrl: base.conflict,
+      model: model.conflict,
+    },
+  };
+}
 
 const CHANNELS = [
   {
+    scope: "intl",
     name: "international-primary",
-    baseUrl: INTL_BASE,
-    model: "deepseek-ai/DeepSeek-V4-Pro",
-    keyEnv: "SILICONFLOW_INTL_API_KEY_PRIMARY"
+    defaultModel: "deepseek-ai/DeepSeek-V4-Pro",
+    modelEnvNames: ["OPENAI_COMPAT_MODEL"],
+    keyEnv: "OPENAI_COMPAT_API_KEY"
   },
   {
+    scope: "intl",
     name: "international-secondary",
-    baseUrl: INTL_BASE,
-    model: "deepseek-ai/DeepSeek-V4-Pro",
-    keyEnv: "SILICONFLOW_INTL_API_KEY_SECONDARY"
+    defaultModel: "deepseek-ai/DeepSeek-V4-Pro",
+    modelEnvNames: ["OPENAI_COMPAT_MODEL"],
+    keyEnv: "OPENAI_COMPAT_API_KEY"
   },
   {
+    scope: "cn",
     name: "china-primary",
-    baseUrl: CN_BASE,
-    model: "Pro/deepseek-ai/DeepSeek-V3.2",
-    keyEnv: "SILICONFLOW_CN_API_KEY_PRIMARY"
+    defaultModel: "Pro/deepseek-ai/DeepSeek-V3.2",
+    modelEnvNames: ["OPENAI_COMPAT_MODEL"],
+    keyEnv: "OPENAI_COMPAT_API_KEY"
   },
   {
+    scope: "cn",
     name: "china-secondary",
-    baseUrl: CN_BASE,
-    model: "Pro/deepseek-ai/DeepSeek-V3.2",
-    keyEnv: "SILICONFLOW_CN_API_KEY_SECONDARY"
+    defaultModel: "Pro/deepseek-ai/DeepSeek-V3.2",
+    modelEnvNames: ["OPENAI_COMPAT_MODEL"],
+    keyEnv: "OPENAI_COMPAT_API_KEY"
   }
 ];
 
 export function channelsForRuntime(runtimeMode) {
-  const mode = normalizeRuntimeMode(runtimeMode);
-  const order = new Map(mode.channelOrder.map((name, index) => [name, index]));
-  return [...CHANNELS].sort((a, b) => (order.get(a.name) ?? 99) - (order.get(b.name) ?? 99));
+  normalizeRuntimeMode(runtimeMode);
+  return [...CHANNELS];
 }
 
 export function configuredChannels(runtimeMode) {
-  return channelsForRuntime(runtimeMode).map((channel, index) => ({
-    ...channel,
-    priority: index + 1,
-    configured: Boolean(env(channel.keyEnv))
-  }));
+  return channelsForRuntime(runtimeMode).map((rawChannel, index) => {
+    const channel = resolveChannel(rawChannel);
+    return {
+      ...channel,
+      priority: index + 1,
+      configured: Boolean(env(channel.keyEnv))
+    };
+  });
+}
+
+export function channelConfigWarnings(runtimeMode, preparedChannels) {
+  const channels = Array.isArray(preparedChannels) ? preparedChannels : configuredChannels(runtimeMode);
+  const warnings = [];
+  const warnedMissingApiKeyEnvs = new Set();
+  for (const channel of channels) {
+    if (!channel.configured && !warnedMissingApiKeyEnvs.has(channel.keyEnv)) {
+      warnedMissingApiKeyEnvs.add(channel.keyEnv);
+      warnings.push({
+        type: "api-key-missing",
+        scope: channel.scope || "global",
+        channel: channel.name,
+        envName: channel.keyEnv,
+        message: `缺少 API Key：${channel.keyEnv}`
+      });
+    }
+
+    if (channel.conflicts?.baseUrl?.hasConflict) {
+      warnings.push({
+        type: "base-url-conflict",
+        scope: channel.scope || "global",
+        channel: channel.name,
+        selected: channel.conflicts.baseUrl.selected,
+        overridden: channel.conflicts.baseUrl.overridden || [],
+        message: `Base URL 配置冲突，当前使用 ${channel.conflicts.baseUrl.selected}`
+      });
+    }
+
+    if (channel.conflicts?.model?.hasConflict) {
+      warnings.push({
+        type: "model-conflict",
+        scope: channel.scope || "global",
+        channel: channel.name,
+        selected: channel.conflicts.model.selected,
+        overridden: channel.conflicts.model.overridden || [],
+        message: `模型配置冲突，当前使用 ${channel.conflicts.model.selected}`
+      });
+    }
+  }
+
+  return warnings;
 }
 
 let modelCatalogCache;
@@ -119,7 +267,7 @@ export async function discoverResearchModels(limit = 6, runtimeMode) {
   if (modelCatalogCache) return modelCatalogCache.slice(0, limit);
 
   const discovered = [];
-  for (const channel of channelsForRuntime(runtimeMode)) {
+  for (const channel of configuredChannels(runtimeMode)) {
     const models = await fetchModelCatalog(channel);
     for (const id of models) {
       const score = rankResearchModel(id);
@@ -127,18 +275,18 @@ export async function discoverResearchModels(limit = 6, runtimeMode) {
     }
   }
 
-  const preferredFallback = [
-    "deepseek-ai/DeepSeek-V4-Pro",
-    "Pro/deepseek-ai/DeepSeek-V3.2",
-    "zai-org/GLM-5.1",
-    "Pro/zai-org/GLM-5.1",
-    "Qwen/Qwen3.6-35B-A3B",
-    "moonshotai/Kimi-K2.6",
-    "Pro/moonshotai/Kimi-K2.6",
-    "Qwen/Qwen3-235B-A22B",
-    "Qwen/QwQ-32B",
-    "MiniMaxAI/MiniMax-M1"
-  ];
+  const preferredFallback = configuredModelList(
+    [
+      "deepseek-ai/DeepSeek-V4-Pro",
+      "zai-org/GLM-5.1",
+      "Qwen/Qwen3.6-35B-A3B",
+      "moonshotai/Kimi-K2.6",
+      "Qwen/Qwen3-235B-A22B",
+      "Qwen/QwQ-32B",
+      "MiniMaxAI/MiniMax-M1"
+    ],
+    "OPENAI_COMPAT_RESEARCH_FALLBACK_MODELS"
+  );
 
   const ranked = discovered
     .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
@@ -165,17 +313,29 @@ export async function callModel(messages, options = {}) {
   const errors = [];
   const timeoutMs = options.timeoutMs ?? 120000;
   const allowedChannels = Array.isArray(options.channelNames) && options.channelNames.length ? new Set(options.channelNames) : null;
-  for (const channel of channelsForRuntime(options.runtimeMode)) {
+
+  function formatModelError(channelName, modelName, error) {
+    const rawName = String(error?.name || "");
+    const rawMessage = String(error?.message || error || "未知错误");
+    const lowered = `${rawName} ${rawMessage}`.toLowerCase();
+    if (lowered.includes("abort")) {
+      return `${channelName}/${modelName}: timeout after ${timeoutMs}ms`;
+    }
+    return `${channelName}/${modelName}: ${rawMessage}`;
+  }
+
+  for (const channel of configuredChannels(options.runtimeMode)) {
     if (allowedChannels && !allowedChannels.has(channel.name)) continue;
     const apiKey = env(channel.keyEnv);
     if (!apiKey) continue;
     const models = modelsForChannel(channel, options);
+    const baseUrl = channel.baseUrl;
 
     for (const model of models) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const response = await fetch(`${channel.baseUrl}/chat/completions`, {
+        const response = await fetch(`${baseUrl}/chat/completions`, {
           method: "POST",
           headers: {
             authorization: `Bearer ${apiKey}`,
@@ -208,7 +368,7 @@ export async function callModel(messages, options = {}) {
           channel: channel.name
         };
       } catch (error) {
-        errors.push(`${channel.name}/${model}: ${error?.message || String(error)}`);
+        errors.push(formatModelError(channel.name, model, error));
       } finally {
         clearTimeout(timer);
       }

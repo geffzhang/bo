@@ -1,7 +1,6 @@
 import { callModel, extractJson } from "./ai.mjs";
 import { clip, env, uniqBy } from "./util.mjs";
 import { evaluateSourceQuality, TOPIC_NAMES } from "./report-quality.mjs";
-import { normalizeRuntimeMode, CN_RESEARCH_MODELS, INTL_RESEARCH_MODELS } from "./runtime-mode.mjs";
 
 const SEARCH_RESULT_LIMIT = 10;
 const TOPIC_READ_LIMIT = 24;
@@ -10,15 +9,11 @@ const SEARCH_TIMEOUT_MS = 12000;
 const MODEL_PLANNING_TIMEOUT_MS = 60000;
 
 const RESEARCH_MODEL_ROUTES = [
-  { model: "deepseek-ai/DeepSeek-V4-Flash", channelNames: ["international-primary", "international-secondary"] },
-  { model: "deepseek-ai/DeepSeek-V4-Pro", channelNames: ["international-primary", "international-secondary"] },
-  { model: "Pro/deepseek-ai/DeepSeek-V3.2", channelNames: ["china-primary", "china-secondary"] },
-  { model: "zai-org/GLM-5.1", channelNames: ["international-primary", "international-secondary"] },
-  { model: "Qwen/Qwen3.6-35B-A3B", channelNames: ["international-primary", "international-secondary"] },
-  { model: "moonshotai/Kimi-K2.6", channelNames: ["international-primary", "international-secondary"] },
-  { model: "Pro/zai-org/GLM-5.1", channelNames: ["china-primary", "china-secondary"] },
-  { model: "Qwen/Qwen3.6-35B-A3B", channelNames: ["china-primary", "china-secondary"] },
-  { model: "Pro/moonshotai/Kimi-K2.6", channelNames: ["china-primary", "china-secondary"] }
+  "deepseek-ai/DeepSeek-V4-Flash",
+  "deepseek-ai/DeepSeek-V4-Pro",
+  "zai-org/GLM-5.1",
+  "Qwen/Qwen3.6-35B-A3B",
+  "moonshotai/Kimi-K2.6"
 ];
 
 const SEARCH_HEADERS = {
@@ -585,17 +580,12 @@ function websiteDomain(company) {
 }
 
 async function modelResearchModels(runtimeMode) {
-  const configured = String(env("SILICONFLOW_RESEARCH_MODELS") || "")
-    .split(",")
+  const configured = String(env("OPENAI_COMPAT_RESEARCH_FALLBACK_MODELS") || "")
+    .split(/[\n,]/)
     .map((item) => item.trim())
     .filter(Boolean);
-  if (configured.length && !configured.some((item) => item.includes("DeepSeek"))) {
-    return configured.slice(0, 6).map((model) => ({ model }));
-  }
-  const mode = normalizeRuntimeMode(runtimeMode);
-  const intlRoutes = RESEARCH_MODEL_ROUTES.filter((route) => arr(route.channelNames).some((name) => name.startsWith("international")));
-  const cnRoutes = RESEARCH_MODEL_ROUTES.filter((route) => arr(route.channelNames).some((name) => name.startsWith("china")));
-  return mode.mode === "china" ? [...cnRoutes, ...intlRoutes] : [...intlRoutes, ...cnRoutes];
+  if (configured.length) return configured.slice(0, 6);
+  return [...RESEARCH_MODEL_ROUTES];
 }
 
 async function mapLimit(items, limit, worker) {
@@ -888,7 +878,7 @@ async function callPlanningModel(messages, modelRoutes, company, options = {}) {
       });
       return { model: answer.model, channel: answer.channel, parsed: extractJson(answer.content) };
     } catch (error) {
-      errors.push(`${model}: ${error?.message || String(error)}`);
+      errors.push(error?.message || String(error));
     }
   }
   const err = new Error(errors.join("\n") || "所有检索规划模型均调用失败");

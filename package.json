@@ -10,8 +10,9 @@
     "netlify:dev": "netlify dev"
   },
   "dependencies": {
-    "@netlify/blobs": "^9.1.0",
+    "@netlify/blobs": "^9.1.6",
     "lucide": "^1.16.0",
+    "minio": "^8.0.7",
     "nanoid": "^5.0.9",
     "pdf-parse": "^1.1.1"
   },
