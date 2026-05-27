@@ -2,6 +2,7 @@ import { fail, json } from "../lib/http.mjs";
 import { readJson } from "../lib/store.mjs";
 import { updateJob } from "../lib/pipeline.mjs";
 import { decorateJob } from "../lib/job-progress.mjs";
+import { requireRequestIdentity } from "../lib/auth.mjs";
 
 function isStale(job) {
   if (!["queued", "running"].includes(job?.status)) return false;
@@ -12,11 +13,13 @@ function isStale(job) {
 
 export default async function handler(request) {
   try {
+    const identity = requireRequestIdentity(request);
     const url = new URL(request.url);
     const jobId = url.searchParams.get("jobId");
     if (!jobId) return fail("缺少 jobId", 400);
     let job = await readJson("jobs", `${jobId}.json`, null);
     if (!job) return fail("任务不存在", 404);
+    if (String(job.ownerId || "").trim() !== identity.userId) return fail("无权查看该任务", 403);
     if (isStale(job)) {
       await updateJob(jobId, {
         status: "error",
@@ -29,6 +32,6 @@ export default async function handler(request) {
     }
     return json({ ok: true, job: decorateJob(job) });
   } catch (error) {
-    return fail(error?.message || "读取任务状态失败", 500);
+    return fail(error?.message || "读取任务状态失败", Number(error?.status) || 500);
   }
 }

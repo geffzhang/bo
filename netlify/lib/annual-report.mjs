@@ -288,7 +288,10 @@ async function parsePdf(buffer) {
   };
 }
 
-export async function parseAnnualReportBuffer(buffer, { fileName = "annual-report.pdf", companyName = "" } = {}) {
+export async function parseAnnualReportBuffer(
+  buffer,
+  { fileName = "annual-report.pdf", companyName = "", ownerId = "", ownerName = "" } = {}
+) {
   const size = buffer?.byteLength || buffer?.length || 0;
   if (!size) throw new Error("年报文件为空");
   if (size > MAX_PDF_BYTES) throw new Error("年报 PDF 超过 5MB，建议先压缩或上传更小版本。");
@@ -317,6 +320,8 @@ export async function parseAnnualReportBuffer(buffer, { fileName = "annual-repor
     textLength,
     avgTextPerPage: Math.round(avgText),
     sourceType: "用户上传年报",
+    ownerId: String(ownerId || "").trim(),
+    ownerName: String(ownerName || "").trim(),
     metrics,
     sections,
     warnings: [
@@ -331,4 +336,11 @@ export async function readAnnualReportEvidence(annualReportId) {
   const key = String(annualReportId || "").trim();
   if (!key) return null;
   return readJson("annual-reports", `${key}.json`, null);
+}
+
+export async function readAnnualReportEvidenceForUser(annualReportId, ownerId = "") {
+  const evidence = await readAnnualReportEvidence(annualReportId);
+  if (!evidence) return null;
+  if (String(evidence.ownerId || "").trim() !== String(ownerId || "").trim()) return null;
+  return evidence;
 }

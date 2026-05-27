@@ -1,9 +1,10 @@
-﻿import { json } from "../lib/http.mjs";
+﻿import { fail, json } from "../lib/http.mjs";
 import { getIndex, listJson, readJson, saveIndex } from "../lib/store.mjs";
 import { normalizeText, scoreMatch } from "../lib/util.mjs";
 import { qualityStatusText, withinDays } from "../lib/report-quality.mjs";
 import { buildOpportunityRating, ratingIndex } from "../lib/opportunity-rating.mjs";
 import { auditReport } from "../lib/source-audit.mjs";
+import { getRequestIdentity, legacyOwnerlessCompatEnabled } from "../lib/auth.mjs";
 
 function periodDays(period) {
   if (period === "7d") return 7;
@@ -31,6 +32,9 @@ function dedupeLatestByCompany(reports) {
 }
 
 export default async function handler(request) {
+  const identity = getRequestIdentity(request);
+  if (!identity.userId) return fail("未登录或缺少用户身份", 401);
+  const legacyCompat = legacyOwnerlessCompatEnabled();
   const url = new URL(request.url);
   const query = url.searchParams.get("q") || "";
   const period = url.searchParams.get("period") || "30d";
@@ -65,7 +69,9 @@ export default async function handler(request) {
         modelName: report.modelName,
         modelChannel: report.modelChannel,
         modelDisplay: report.modelDisplay,
-        usedModels: report.usedModels || []
+        usedModels: report.usedModels || [],
+        ownerId: report.ownerId || "",
+        ownerName: report.ownerName || ""
       }))
       .sort((a, b) => String(b.generatedAt).localeCompare(String(a.generatedAt)));
     if (restored.length) {
@@ -74,7 +80,13 @@ export default async function handler(request) {
     }
   }
   const enrichedReports = await Promise.all(
-    (index.reports || []).map(async (report) => {
+    (index.reports || [])
+      .filter((report) => {
+        const ownerId = String(report.ownerId || "").trim();
+        if (ownerId === identity.userId) return true;
+        return legacyCompat && !ownerId;
+      })
+      .map(async (report) => {
       const full = await readJson("reports", `${report.reportId}.json`, null);
       if (!full) return { ...report, opportunityRating: report.opportunityRating || { status: "not_rated", label: "鏆備笉璇勭骇" } };
       const audited = auditReport(full);

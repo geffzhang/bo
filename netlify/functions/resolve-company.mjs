@@ -3,6 +3,7 @@ import { getIndex } from "../lib/store.mjs";
 import { normalizeText, scoreMatch } from "../lib/util.mjs";
 import { qualityStatusText } from "../lib/report-quality.mjs";
 import { resolveCandidates } from "../lib/research.mjs";
+import { legacyOwnerlessCompatEnabled, requireRequestIdentity } from "../lib/auth.mjs";
 
 function normalizeCandidateName(value = "") {
   return normalizeText(String(value || "").replace(/(股份有限公司|有限责任公司|集团有限公司|有限公司|公司)$/g, ""));
@@ -102,6 +103,8 @@ function isSameCompanyCacheHit(report, query) {
 
 export default async function handler(request) {
   try {
+    const identity = requireRequestIdentity(request);
+    const legacyCompat = legacyOwnerlessCompatEnabled();
     const body = await readBody(request);
     const query = requireText(body.query, "企业名称");
     const region = String(body.region || "").trim();
@@ -113,6 +116,11 @@ export default async function handler(request) {
     const index = await getIndex();
     const cached = dedupeLatest(
       (index.reports || [])
+        .filter((report) => {
+          const ownerId = String(report.ownerId || "").trim();
+          if (ownerId === identity.userId) return true;
+          return legacyCompat && !ownerId;
+        })
         .map((report) => ({
           ...report,
           opportunityRating: report.opportunityRating || { status: "not_rated", label: "暂不评级" },
@@ -168,6 +176,6 @@ export default async function handler(request) {
       });
     }
   } catch (error) {
-    return fail(error?.message || "主体核对失败", 500);
+    return fail(error?.message || "主体核对失败", Number(error?.status) || 500);
   }
 }

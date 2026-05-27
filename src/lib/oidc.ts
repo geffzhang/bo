@@ -330,6 +330,23 @@ export async function getAccessToken(): Promise<string | null> {
   return user?.access_token ?? null;
 }
 
+export async function getAuthRequestHeaders(): Promise<Record<string, string>> {
+  const user = await getAuthUser();
+  if (!user) return {};
+
+  const profile = user.profile as Record<string, unknown>;
+  const userId = String(profile.sub ?? profile.uid ?? profile.user_id ?? "").trim();
+  const userName = String(
+    profile.preferred_username ?? profile.nickname ?? profile.name ?? profile.email ?? ""
+  ).trim();
+
+  const headers: Record<string, string> = {};
+  if (user.access_token) headers.authorization = `Bearer ${user.access_token}`;
+  if (userId) headers["x-bo-user-id"] = userId;
+  if (userName) headers["x-bo-user-name"] = userName;
+  return headers;
+}
+
 export async function requireAccessToken(): Promise<string> {
   const token = await getAccessToken();
   if (!token) throw new AuthError();

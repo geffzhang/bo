@@ -1,12 +1,25 @@
 import { readBody } from "../lib/http.mjs";
 import { runReportJob, updateJob } from "../lib/pipeline.mjs";
 import { JobCancelledError } from "../lib/job-progress.mjs";
+import { readJson } from "../lib/store.mjs";
+import { getRequestIdentity } from "../lib/auth.mjs";
 
 export default async function handler(request) {
+  const identity = getRequestIdentity(request);
+  if (!identity.userId) {
+    console.error("Missing user identity in run-report-job-background");
+    return;
+  }
   const body = await readBody(request);
   const jobId = body.jobId;
   if (!jobId) {
     console.error("Missing jobId");
+    return;
+  }
+
+  const job = await readJson("jobs", `${jobId}.json`, null);
+  if (!job || String(job.ownerId || "").trim() !== identity.userId) {
+    console.error("Forbidden job access", { jobId, userId: identity.userId });
     return;
   }
 

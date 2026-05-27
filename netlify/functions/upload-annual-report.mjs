@@ -1,8 +1,10 @@
 import { fail, json } from "../lib/http.mjs";
 import { parseAnnualReportBuffer } from "../lib/annual-report.mjs";
+import { requireRequestIdentity } from "../lib/auth.mjs";
 
 export default async function handler(request) {
   try {
+    const identity = requireRequestIdentity(request);
     if (request.method && request.method !== "POST") return fail("仅支持 POST 上传", 405);
     let form;
     try {
@@ -17,9 +19,14 @@ export default async function handler(request) {
     if (!/\.pdf$/i.test(fileName) && file.type !== "application/pdf") return fail("当前只支持 PDF 年报", 400);
 
     const arrayBuffer = await file.arrayBuffer();
-    const evidence = await parseAnnualReportBuffer(Buffer.from(arrayBuffer), { fileName, companyName });
+    const evidence = await parseAnnualReportBuffer(Buffer.from(arrayBuffer), {
+      fileName,
+      companyName,
+      ownerId: identity.userId,
+      ownerName: identity.displayName
+    });
     return json({ ok: true, annualReport: evidence });
   } catch (error) {
-    return fail(error?.message || "年报解析失败", 500);
+    return fail(error?.message || "年报解析失败", Number(error?.status) || 500);
   }
 }

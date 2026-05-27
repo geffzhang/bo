@@ -5,7 +5,8 @@ import { id, normalizeText, nowIso, slugify, scoreMatch } from "./util.mjs";
 import { buildOpportunityRating, ratingIndex } from "./opportunity-rating.mjs";
 import { JobCancelledError, decorateJob, normalizePhase } from "./job-progress.mjs";
 import { auditReport, auditSources } from "./source-audit.mjs";
-import { readAnnualReportEvidence } from "./annual-report.mjs";
+import { readAnnualReportEvidenceForUser } from "./annual-report.mjs";
+import { legacyOwnerlessCompatEnabled } from "./auth.mjs";
 import {
   RECENT_REPORT_DAYS,
   buildDiagnosticReport,
@@ -24,8 +25,13 @@ function sameCompany(report, company) {
   return scoreMatch(report, name) >= 100;
 }
 
-function recentReportsForCompany(index, company, days = RECENT_REPORT_DAYS) {
+function sameOwner(resource, ownerId) {
+  return String(resource?.ownerId || "").trim() === String(ownerId || "").trim();
+}
+
+function recentReportsForCompany(index, company, days = RECENT_REPORT_DAYS, ownerId = "") {
   return (index.reports || [])
+    .filter((report) => sameOwner(report, ownerId))
     .filter((report) => sameCompany(report, company))
     .filter((report) => withinDays(report.generatedAt, days))
     .sort((a, b) => String(b.generatedAt).localeCompare(String(a.generatedAt)));
@@ -36,6 +42,7 @@ function mergeIndexReports(existingReports, entry) {
     entry,
     ...(existingReports || []).filter((report) => {
       if (!withinDays(report.generatedAt, RECENT_REPORT_DAYS)) return true;
+      if (!sameOwner(report, entry.ownerId)) return true;
       if (sameCompany(report, entry)) return false;
       return normalizeText(report.reportId) !== normalizeText(entry.reportId);
     })
@@ -116,7 +123,7 @@ async function assertJobNotCancelled(jobId) {
   }
 }
 
-export async function createJob(company, reason = "generate", runtimeMode = null) {
+export async function createJob(company, reason = "generate", runtimeMode = null, owner = {}) {
   const jobId = id("job", primaryCompanyName(company));
   const now = nowIso();
   const jobCompany = {
@@ -156,6 +163,8 @@ export async function createJob(company, reason = "generate", runtimeMode = null
         }
       ],
       companyKey: companyKey(jobCompany),
+      ownerId: String(owner.userId || "").trim(),
+      ownerName: String(owner.displayName || "").trim(),
       createdAt: now,
       updatedAt: now
     })
@@ -163,16 +172,20 @@ export async function createJob(company, reason = "generate", runtimeMode = null
   return jobId;
 }
 
-export async function findLatestReport(company, days = RECENT_REPORT_DAYS) {
+export async function findLatestReport(company, days = RECENT_REPORT_DAYS, ownerId = "") {
   const index = await getIndex();
-  return recentReportsForCompany(index, typeof company === "string" ? { standardName: company } : company, days)[0] || null;
+  const target = typeof company === "string" ? { standardName: company } : company;
+  const owned = recentReportsForCompany(index, target, days, ownerId)[0] || null;
+  if (owned) return owned;
+  if (!legacyOwnerlessCompatEnabled()) return null;
+  return recentReportsForCompany(index, target, days, "")[0] || null;
 }
 
 export async function runReportJob(jobId) {
   const job = await readJson("jobs", `${jobId}.json`, null);
   if (!job) throw new Error(`任务不存在：${jobId}`);
   const runtimeMode = job.runtimeMode || job.company?.runtimeMode || null;
-  const annualReportEvidence = await readAnnualReportEvidence(job.company?.annualReportId);
+  const annualReportEvidence = await readAnnualReportEvidenceForUser(job.company?.annualReportId, job.ownerId || "");
   const company = annualReportEvidence
     ? {
         ...job.company,
@@ -294,6 +307,12 @@ export async function runReportJob(jobId) {
     usedModels: structured.usedModels || sources.usedModels || [],
     modelDisplay: structured.modelDisplay || structured.modelName
   };
+  const ownerId = String(job.ownerId || "").trim();
+  const ownerName = String(job.ownerName || "").trim();
+  if (ownerId) {
+    baseReport.ownerId = ownerId;
+    baseReport.ownerName = ownerName;
+  }
   if (annualReportEvidence) {
     baseReport.annualReportEvidence = annualReportEvidence;
     baseReport.qualityWarnings = [...baseReport.qualityWarnings, ...(annualReportEvidence.warnings || [])];
@@ -331,7 +350,9 @@ export async function runReportJob(jobId) {
     modelName: report.modelName,
     modelChannel: report.modelChannel,
     modelDisplay: report.modelDisplay,
-    usedModels: report.usedModels || []
+    usedModels: report.usedModels || [],
+    ownerId,
+    ownerName
   };
   await saveIndex({
     reports: mergeIndexReports(index.reports || [], entry)
@@ -355,9 +376,14 @@ export async function runReportJob(jobId) {
   return report;
 }
 
-export async function cancelJob(jobId) {
+export async function cancelJob(jobId, ownerId = "") {
   const current = await readJson("jobs", `${jobId}.json`, null);
   if (!current) throw new Error(`任务不存在：${jobId}`);
+  if (!sameOwner(current, ownerId)) {
+    const error = new Error("无权停止该任务");
+    error.status = 403;
+    throw error;
+  }
   if (["done", "error", "cancelled"].includes(current.status)) return decorateJob(current);
   await updateJob(jobId, {
     cancelRequested: true,
@@ -370,13 +396,18 @@ export async function cancelJob(jobId) {
   return readJson("jobs", `${jobId}.json`, null);
 }
 
-export async function improveReport(reportId, userInput) {
+export async function improveReport(reportId, userInput, ownerId = "") {
   const input = String(userInput || "").trim();
   if (!reportId) throw new Error("缺少报告ID");
   if (!input) throw new Error("缺少补充信息");
 
   const current = await readJson("reports", `${reportId}.json`, null);
   if (!current) throw new Error(`报告不存在：${reportId}`);
+  if (!sameOwner(current, ownerId)) {
+    const error = new Error("无权修改该报告");
+    error.status = 403;
+    throw error;
+  }
 
   const improved = await improveStructuredReport(current, input);
   const auditedImproved = auditReport(improved);

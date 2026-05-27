@@ -195,6 +195,66 @@ docker compose -f docker-compose.local.yml up -d --build
 - 未登录访问 Bo 时，会跳转到 Keycloak；登录后会经 `/auth/callback` 回到原页面。
 - 当前不校验对 `/.netlify/functions/*` 的直连请求。若需要 API 级鉴权，需要后续在服务端增加 token 校验。
 
+### 历史报告归属迁移
+
+当历史数据里存在未写入 `ownerId` 的旧报告时，这些报告在新隔离规则下不会出现在列表中。可使用以下命令给旧报告批量补齐归属。
+
+该迁移会同时修复这些报告关联的 `annual-reports` 证据归属，避免后续刷新任务时因 owner 缺失而无法读取年报证据。
+
+如需在迁移窗口临时读取历史无 `ownerId` 的旧报告，可开启兼容开关（默认关闭）：
+
+```text
+BO_LEGACY_OWNERLESS_COMPAT=true
+```
+
+建议仅在迁移期间短暂启用，迁移完成后立即关闭以恢复严格隔离。
+
+先 dry-run 查看：
+
+```powershell
+npm run migrate:report-owners -- --owner-id <keycloak-sub>
+```
+
+也可以直接传 JWT 自动解析 `sub`：
+
+```powershell
+npm run migrate:report-owners -- --access-token <jwt-token>
+```
+
+更安全的方式是通过环境变量传 token（避免出现在命令历史中）：
+
+```powershell
+$env:BO_ACCESS_TOKEN = "<jwt-token>"
+npm run migrate:report-owners
+Remove-Item Env:BO_ACCESS_TOKEN
+```
+
+确认后执行写入：
+
+```powershell
+npm run migrate:report-owners -- --owner-id <keycloak-sub> --owner-name <display-name> --apply
+```
+
+JWT 模式也支持直接落库：
+
+```powershell
+npm run migrate:report-owners -- --access-token <jwt-token> --apply
+```
+
+如需更换环境变量名称：
+
+```powershell
+$env:MY_MIGRATE_TOKEN = "<jwt-token>"
+npm run migrate:report-owners -- --access-token-env MY_MIGRATE_TOKEN --apply
+Remove-Item Env:MY_MIGRATE_TOKEN
+```
+
+可选：只迁移部分报告：
+
+```powershell
+npm run migrate:report-owners -- --owner-id <keycloak-sub> --report-ids id1,id2,id3 --apply
+```
+
 ## 本地运行
 
 推荐方式：
