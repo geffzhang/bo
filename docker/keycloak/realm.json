@@ -1,0 +1,46 @@
+{
+  "realm": "bo",
+  "enabled": true,
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "rememberMe": true,
+  "clients": [
+    {
+      "clientId": "bo-web",
+      "name": "Bo Web",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "redirectUris": [
+        "http://localhost:8888/*"
+      ],
+      "webOrigins": [
+        "http://localhost:8888"
+      ],
+      "rootUrl": "http://localhost:8888",
+      "directAccessGrantsEnabled": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "attributes": {
+        "pkce.code.challenge.method": ""
+      }
+    }
+  ],
+  "users": [
+    {
+      "username": "bo-demo",
+      "enabled": true,
+      "email": "bo-demo@example.com",
+      "emailVerified": true,
+      "firstName": "Bo",
+      "lastName": "Demo",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "bo-demo123",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

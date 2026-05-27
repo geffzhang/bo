@@ -126,6 +126,8 @@ nb-bo 是一个面向售前、销售和业务团队的企业商机研究工具�
 本地运行时，在项目根目录创建 `.env`。线上部署时，在 Netlify 项目后台配置同名环境变量。
 
 ```text
+VITE_OIDC_AUTHORITY=
+VITE_OIDC_CLIENT_ID=
 OPENAI_COMPAT_BASE_URL=
 OPENAI_COMPAT_API_KEY=
 OPENAI_COMPAT_MODEL=
@@ -143,6 +145,8 @@ MINIO_AUTO_CREATE_BUCKET=
 
 说明：
 
+- `VITE_OIDC_AUTHORITY` 是前端 OIDC authority，默认本地可用值为 `http://localhost:8080/realms/bo`。
+- `VITE_OIDC_CLIENT_ID` 是前端 OIDC client id，默认本地可用值为 `bo-web`。
 - `OPENAI_COMPAT_API_KEY` 是统一模型通道使用的 API Key。
 - `OPENAI_COMPAT_BASE_URL` 用于覆盖统一模型通道的 OpenAI 兼容网关地址（示例：`https://your-gateway.example.com/v1`）。
 - 不配置 `OPENAI_COMPAT_*` 时，默认使用硅基流动地址（兼容旧配置）。
@@ -153,6 +157,43 @@ MINIO_AUTO_CREATE_BUCKET=
 - `MINIO_USE_SSL` 可选，常见取值：`true` / `false`；若 `MINIO_ENDPOINT` 带协议可自动推断。
 - `MINIO_AUTO_CREATE_BUCKET` 可选，设为 `true` 时在桶不存在时尝试自动创建。
 - `.env` 已被 `.gitignore` 排除，请不要提交本地环境变量文件。
+
+## Keycloak 本地认证
+
+Bo 入口现在支持 Keycloak OIDC 前端门禁。当前仅实现前端登录门禁，不包含 Netlify Functions 的服务端鉴权。
+
+### 本地认证变量
+
+在 `.env` 中设置：
+
+```text
+VITE_OIDC_AUTHORITY=http://localhost:8080/realms/bo
+VITE_OIDC_CLIENT_ID=bo-web
+```
+
+### Docker Compose 联调
+
+```powershell
+copy .env.example .env
+notepad .env
+docker compose -f docker-compose.local.yml up -d --build
+```
+
+启动后可访问：
+
+- Bo：`http://localhost:8888`
+- Keycloak：`http://localhost:8080`
+- Keycloak Admin：`http://localhost:8080/admin`
+
+默认账号（仅本地联调）：
+
+- 业务用户：`bo-demo / bo-demo123`
+- 管理员：`admin / admin`
+
+### 当前安全边界
+
+- 未登录访问 Bo 时，会跳转到 Keycloak；登录后会经 `/auth/callback` 回到原页面。
+- 当前不校验对 `/.netlify/functions/*` 的直连请求。若需要 API 级鉴权，需要后续在服务端增加 token 校验。
 
 ## 本地运行
 
